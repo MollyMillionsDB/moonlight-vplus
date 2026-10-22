@@ -48,12 +48,14 @@ class CompressedAudioDiagnostics(private val mode: String, private val bytesPerW
         val route = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             track.routedDevice?.type ?: -1
         } else -1
+        val bufferFrames = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) track.bufferSizeInFrames else -1
         LimeLog.info(
-            "CompressedAudioDiag mode=$mode windowMs=${(now - windowStartNs) / 1_000_000} " +
+            "CompressedAudioDiag mode=$mode clientNowNs=$now windowMs=${(now - windowStartNs) / 1_000_000} " +
                 "frames=$frames bytes=$bytes maxArrivalGapMs=$maxArrivalGapMs " +
                 "maxPendingAudioMs=$maxPendingAudioMs " +
                 "avgWriteUs=${if (writes > 0) totalWriteNs / writes / 1_000 else 0} maxWriteMs=$maxWriteMs " +
                 "shortWrites=$shortWrites writeErrors=$writeErrors underruns=$underruns routeType=$route " +
+                "bufferFrames=$bufferFrames playbackHeadPosition=${track.playbackHeadPosition.toLong() and 0xffffffffL} " +
                 "timestampValid=$timestampValid timestampPosition=${if (timestampValid) timestamp.framePosition else -1} " +
                 "timestampNanoTime=${if (timestampValid) timestamp.nanoTime else -1}"
         )

@@ -27,6 +27,7 @@ class AndroidAudioRenderer(
     private var track: AudioTrack? = null
     private var spatializer: Spatializer? = null
     private val audioTimestamp = AudioTimestamp()
+    private val diagnostics = PcmAudioDiagnostics()
     private val systemAudioHaptics = SystemAudioHapticsSession(
         enableSystemAudioHaptics,
         onSystemAudioHapticsActiveChanged
@@ -101,6 +102,7 @@ class AndroidAudioRenderer(
         sampleRate: Int,
         samplesPerFrame: Int
     ): Int {
+        diagnostics.reset()
         // AudioTrack frame positions restart from zero whenever the track is
         // rebuilt. Keep them in the native IR stream's cumulative time origin.
         trackStreamFrameOffset = decodedStreamFramePosition
@@ -334,14 +336,29 @@ class AndroidAudioRenderer(
 
         // Backlog shedding happens in the native decode callback before bass/haptic
         // analysis, so every PCM frame reaching this method must also reach AudioTrack.
+        diagnostics.onArrival()
+        val writeStartNs = System.nanoTime()
         val writtenSamples = currentTrack.write(audioData, 0, audioData.size)
-        if (writtenSamples > 0 && savedSampleRate > 0 && currentTrack.getTimestamp(audioTimestamp)) {
+        val writeElapsedNs = System.nanoTime() - writeStartNs
+        val timestampValid = writtenSamples > 0 && savedSampleRate > 0 && currentTrack.getTimestamp(audioTimestamp)
+        if (timestampValid) {
             onAudioPresentationClock(
                 trackStreamFrameOffset + audioTimestamp.framePosition,
                 audioTimestamp.nanoTime,
                 savedSampleRate
             )
         }
+        diagnostics.onWrite(
+            currentTrack,
+            audioData.size,
+            writtenSamples,
+            savedChannelCount,
+            savedSampleRate,
+            writeElapsedNs,
+            timestampValid,
+            if (timestampValid) audioTimestamp.framePosition else -1L,
+            if (timestampValid) audioTimestamp.nanoTime else -1L
+        )
         decodedStreamFramePosition += frameCount
     }
 
@@ -357,6 +374,7 @@ class AndroidAudioRenderer(
     }
 
     override fun stop() {
+        diagnostics.reset()
         clearAudioPresentationClock()
         systemAudioHaptics.detach()
         val currentTrack = track
@@ -379,6 +397,7 @@ class AndroidAudioRenderer(
     }
 
     override fun cleanup() {
+        diagnostics.reset()
         clearAudioPresentationClock()
         systemAudioHaptics.close()
         spatializer = null

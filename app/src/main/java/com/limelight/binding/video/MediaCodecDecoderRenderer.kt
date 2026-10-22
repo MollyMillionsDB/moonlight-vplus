@@ -210,6 +210,7 @@ class MediaCodecDecoderRenderer(
     private var initialExceptionTimestamp: Long = 0
 
     private val activeWindowVideoStats = VideoStats()
+    private val videoPresentationDiagnostics = VideoPresentationDiagnostics()
     private val lastWindowVideoStats = VideoStats()
     private val globalVideoStats = VideoStats()
     private val frameIntervalTracker = FrameIntervalTracker(600)
@@ -1468,6 +1469,7 @@ class MediaCodecDecoderRenderer(
 
         if (USE_FRAME_RENDER_TIME && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             videoDecoder!!.setOnFrameRenderedListener({ _, presentationTimeUs, renderTimeNanos ->
+                videoPresentationDiagnostics.onFrameRendered(presentationTimeUs, renderTimeNanos)
                 // 首帧实际显示到 surface 的时刻（最准的"画面已上屏"时机）
                 if (!firstFrameDelivered) {
                     firstFrameDelivered = true
@@ -1495,6 +1497,7 @@ class MediaCodecDecoderRenderer(
     }
 
     override fun setup(format: Int, width: Int, height: Int, redrawRate: Int): Int {
+        videoPresentationDiagnostics.reset()
         this.initialWidth = width
         this.initialHeight = height
         synchronized(decoderConfigurationLock) {

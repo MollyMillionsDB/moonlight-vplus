@@ -64,9 +64,23 @@ jobs:
         run: yes | sdkmanager --licenses > /dev/null
 
       - name: Test and build nonRootDebug
+        env:
+          DIAGNOSTIC_KEYSTORE_BASE64: ${{ secrets.AC3_DIAGNOSTIC_KEYSTORE_BASE64 }}
+          DIAGNOSTIC_KEYSTORE_PASSWORD: ${{ secrets.AC3_DIAGNOSTIC_KEYSTORE_PASSWORD }}
         run: |
+          set -euo pipefail
+          test -n "$DIAGNOSTIC_KEYSTORE_BASE64"
+          test -n "$DIAGNOSTIC_KEYSTORE_PASSWORD"
+          key_file="$RUNNER_TEMP/moonlight-diagnostic.p12"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$DIAGNOSTIC_KEYSTORE_BASE64" | base64 --decode > "$key_file"
+          test -s "$key_file"
+          chmod 600 "$key_file"
+          unset DIAGNOSTIC_KEYSTORE_BASE64
+          export DIAGNOSTIC_KEYSTORE_PATH="$key_file"
+          diagnostic_version_code=$((121302001 + GITHUB_RUN_NUMBER))
           chmod +x gradlew
-          ./gradlew :app:testNonRootDebugUnitTest :app:assembleNonRootDebug --no-daemon --stacktrace -PaudioHapticsSdkDir="$AUDIO_HAPTICS_SDK_DIR"
+          ./gradlew :app:testNonRootDebugUnitTest :app:assembleNonRootDebug --no-daemon --stacktrace -PaudioHapticsSdkDir="$AUDIO_HAPTICS_SDK_DIR" -PdiagnosticVersionCode="$diagnostic_version_code"
 
       - name: Verify debug package and checksum
         shell: bash
@@ -75,9 +89,14 @@ jobs:
           mapfile -t apks < <(find app/build/outputs/apk/nonRoot/debug -maxdepth 1 -type f -name '*.apk' -print)
           test "${#apks[@]}" -eq 1
           apk="${apks[0]}"
-          package_name=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          badging=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk")
+          package_name=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging")
+          version_code=$(sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" <<< "$badging")
+          signer_sha=$("$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
           test "$package_name" = com.limelight.vplus_debug
-          echo "APK=$apk PACKAGE=$package_name"
+          test "$version_code" -gt 121302001
+          test "$signer_sha" = 686dfc439a1bc291416b39fba7b745bfd9ee29f2e73b5d285fc7f80d2b6ec8e6
+          echo "APK=$apk PACKAGE=$package_name VERSION_CODE=$version_code SIGNER_SHA256=$signer_sha"
           sha256sum "$apk"
 
       - name: Upload diagnostic APK
