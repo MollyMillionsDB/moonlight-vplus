@@ -11,6 +11,7 @@ import com.limelight.nvstream.jni.MoonBridge
 /** Opt-in AC3 carrier for devices whose raw ENCODING_AC3 route decodes to PCM. */
 class Ac3Iec61937Renderer(private val encodedBufferBytes: Int) : AudioRenderer {
     private var track: AudioTrack? = null
+    private val diagnostics = CompressedAudioDiagnostics("iec61937", 2)
     private val packetizer = Ac3Iec61937Packetizer()
     private var failed = false
     private val sink = Ac3Iec61937Packetizer.Sink { words ->
@@ -18,7 +19,9 @@ class Ac3Iec61937Renderer(private val encodedBufferBytes: Int) : AudioRenderer {
         var offset = 0
         while (offset < words.size) {
             // The API 1 short[] overload is blocking, matching WRITE_BLOCKING.
+            val writeStartNs = System.nanoTime()
             val written = output.write(words, offset, words.size - offset)
+            diagnostics.onWrite(words.size - offset, written, System.nanoTime() - writeStartNs)
             check(written > 0) { "IEC61937 AudioTrack.write returned $written" }
             offset += written
         }
@@ -26,6 +29,7 @@ class Ac3Iec61937Renderer(private val encodedBufferBytes: Int) : AudioRenderer {
 
     override fun setup(audioConfiguration: MoonBridge.AudioConfiguration, sampleRate: Int,
                        samplesPerFrame: Int, codec: Int, bitrate: Int): Int {
+        diagnostics.reset()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N ||
             codec != MoonBridge.AUDIO_CODEC_AC3 || sampleRate != 48000 ||
             audioConfiguration.channelCount !in 1..6) {
@@ -70,6 +74,7 @@ class Ac3Iec61937Renderer(private val encodedBufferBytes: Int) : AudioRenderer {
     override fun playDecodedAudio(audioData: ShortArray) {}
     override fun playEncodedAudio(audioData: ByteArray, length: Int) {
         if (failed || track == null) return
+        diagnostics.onArrival()
         try {
             packetizer.append(audioData, length, sink)
         } catch (e: Exception) {
@@ -78,9 +83,11 @@ class Ac3Iec61937Renderer(private val encodedBufferBytes: Int) : AudioRenderer {
             LimeLog.severe("IEC61937 stopped: ${e.message}; reconnect or select raw AC3")
             stop()
         }
+        track?.let { diagnostics.reportIfDue(it) }
     }
 
     override fun stop() {
+        diagnostics.reset()
         try { track?.pause(); track?.flush() } catch (_: Exception) {}
         packetizer.reset()
     }

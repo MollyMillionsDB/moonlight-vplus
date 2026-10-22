@@ -43,6 +43,7 @@ class Ac3PassthroughRenderer(
     private var track: AudioTrack? = null
     private var encoding: Int = 0
     private var codecName: String = ""
+    private val diagnostics = CompressedAudioDiagnostics("raw", 1)
 
     override fun setup(
         audioConfiguration: MoonBridge.AudioConfiguration,
@@ -51,6 +52,7 @@ class Ac3PassthroughRenderer(
         codec: Int,
         bitrate: Int
     ): Int {
+        diagnostics.reset()
         if (codec == MoonBridge.AUDIO_CODEC_OPUS) {
             return -1
         }
@@ -173,6 +175,7 @@ class Ac3PassthroughRenderer(
     }
 
     override fun stop() {
+        diagnostics.reset()
         try {
             track?.pause()
             track?.flush()
@@ -186,6 +189,7 @@ class Ac3PassthroughRenderer(
     override fun playEncodedAudio(audioData: ByteArray, length: Int) {
         val t = track ?: return
         if (length <= 0) return
+        diagnostics.onArrival()
         try {
             // AC3 is frame-aligned (sync word 0x0B77 marks frame start). A short
             // write would desync the receiver / AVR. Loop with WRITE_BLOCKING
@@ -193,7 +197,9 @@ class Ac3PassthroughRenderer(
             // returns an error).
             var offset = 0
             while (offset < length) {
+                val writeStartNs = System.nanoTime()
                 val written = t.write(audioData, offset, length - offset, AudioTrack.WRITE_BLOCKING)
+                diagnostics.onWrite(length - offset, written, System.nanoTime() - writeStartNs)
                 if (written <= 0) {
                     LimeLog.warning("Ac3PassthroughRenderer.write returned $written, dropping rest of frame")
                     break
@@ -202,7 +208,9 @@ class Ac3PassthroughRenderer(
             }
         } catch (e: Exception) {
             LimeLog.warning("Ac3PassthroughRenderer.write failed: ${e.message}")
+            diagnostics.onWrite(length, -1, 0)
         }
+        diagnostics.reportIfDue(t)
     }
 
     override fun cleanup() {
